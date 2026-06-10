@@ -1,299 +1,245 @@
-# GA4 Ecommerce Analytics Pipeline with dbt & BigQuery
+# GA4 Ecommerce Analytics Platform
 
 ## Project Overview
 
-This project demonstrates the development of an end-to-end analytics pipeline for an ecommerce website using Google Analytics 4 event data.
+This project demonstrates an end-to-end analytics workflow built on Google Analytics 4 ecommerce data using dbt, BigQuery, SQL, and Tableau.
 
-The goal was to transform raw GA4 event-level data into business-ready data marts that support executive reporting, funnel analysis, retention tracking, customer segmentation, product analytics, and revenue performance monitoring.
+The goal was to transform raw event-level GA4 data into trusted business metrics, analytical data marts, and executive dashboards while implementing data quality controls and automated testing.
 
-The solution was built using:
+The project follows a modern analytics engineering approach:
 
-* Google BigQuery
-* dbt
-* SQL
-* Data Quality Testing
+GA4 Raw Events → Staging Layer → Intermediate Layer → Business Marts → Tableau Dashboards
 
 ---
 
 ## Business Objectives
 
-The project answers the following business questions:
+The project addresses several common ecommerce analytics challenges:
 
-* How many users and sessions does the website generate?
-* Which acquisition channels drive the highest revenue?
-* What is the conversion rate across the purchase funnel?
-* How well are users retained over time?
-* Which products generate the most revenue?
-* What is the customer lifetime value (LTV)?
-* How can users be segmented based on purchase behavior?
-
----
-
-## Source Data
-
-Dataset:
-
-Google Analytics 4 Public Ecommerce Dataset
-
-Period:
-
-November 2020 – January 2021
-
-Raw source:
-
-bigquery-public-data.ga4_obfuscated_sample_ecommerce
+* Measure acquisition performance by marketing channel
+* Track user behavior through the ecommerce funnel
+* Analyze customer retention and lifetime value
+* Monitor executive KPIs
+* Detect and document data quality issues
+* Create trusted reporting datasets for BI consumption
 
 ---
 
-## Data Modeling Architecture
-
-### Staging Layer
-
-#### stg_ga4__events
-
-Event-level dataset enriched with:
-
-* Session identifiers
-* Traffic attribution
-* Device information
-* Geographic dimensions
-* Ecommerce metrics
-* Data quality flags
-
-Key transformations:
-
-* Event classification
-* Channel grouping
-* Internal traffic detection
-* GDPR data flagging
-* Purchase validation
-
----
-
-#### stg_ga4__sessions
-
-Session-level aggregation.
-
-Metrics:
-
-* Sessions
-* Revenue
-* Transactions
-* Engagement
-* Funnel progression
-* Conversion flags
-
----
-
-#### stg_ga4__purchases
-
-Transaction-level purchase dataset.
-
-Key features:
-
-* Transaction deduplication
-* Item-level analysis
-* Product hierarchy extraction
-* Revenue validation
-
----
-
-## Analytics Marts
-
-### mart_executive_kpi
-
-Executive summary metrics:
-
-* Users
-* Sessions
-* Revenue
-* Purchases
-* Conversion Rate
-* Average Order Value
-* ARPU
-
----
-
-### mart_channel_performance
-
-Marketing channel performance analysis.
-
-Metrics:
-
-* Sessions
-* Users
-* Revenue
-* Transactions
-* Conversion Rate
-* Revenue per Session
-* ARPU
-* AOV
-
-Dimensions:
-
-* Channel Group
-
----
-
-### mart_funnel
-
-Session-based ecommerce funnel.
-
-Stages:
-
-* View Item
-* Add to Cart
-* Checkout
-* Payment
-* Purchase
-
-Metrics:
-
-* Funnel counts
-* Step conversion rates
-
----
-
-### mart_retention
-
-Monthly cohort retention analysis.
-
-Metrics:
-
-* Cohort Size
-* Active Users
-* Retention Rate
-
-Dimensions:
-
-* Cohort Month
-* Month Number
-
----
-
-### mart_product_performance
-
-Product-level sales analytics.
-
-Metrics:
-
-* Revenue
-* Units Sold
-* Transactions
-* Average Price
-
-Dimensions:
-
-* Product
-* Brand
-* Category
-
----
-
-### mart_user_ltv
-
-Customer lifetime value model.
-
-Metrics:
-
-* Lifetime Revenue
-* Sessions
-* Transactions
-* Purchase Sessions
-* Average Order Value
-* Lifetime Days
-
----
-
-### mart_customer_segments
-
-Customer segmentation based on revenue contribution.
-
-Segments:
-
-* VIP
-* High Value
-* Paying
-* Non-Paying
-
----
-
-## Data Quality Framework
-
-Implemented data quality controls:
-
-* Unique session validation
-* Purchase deduplication
-* Revenue integrity checks
-* Funnel consistency validation
-* Retention boundary testing
-* LTV validation
-
-Examples:
-
-* Purchase events without transaction_id identified and excluded
-* Duplicate purchase events removed using transaction-level deduplication
-* Revenue metrics validated against source events
-
----
-
-## Key Findings
-
-### Revenue
-
-Total revenue:
-
-330,348
-
-### Channel Performance
-
-Top revenue channel:
-
-Direct
-
-Revenue:
-
-236,579
-
-### Funnel
-
-Largest drop-off occurs between product view and purchase stages.
-
-### Retention
-
-Month 1 retention:
-
-36.1%
-
-Month 2 retention:
-
-29.9%
-
-### Device Performance
-
-Desktop and mobile generated similar conversion rates (~1.4%).
-
----
-
-## Technologies
+## Tech Stack
 
 * SQL
 * dbt
+* Google BigQuery
+* Google Analytics 4 Sample Ecommerce Dataset
+* Tableau Public
+* GitHub
+
+---
+
+## Data Architecture
+
+### Staging Layer
+
+Raw GA4 events are standardized and enriched.
+
+Models:
+
+* stg_ga4__events
+* stg_ga4__sessions
+* stg_ga4__purchases
+
+Key transformations:
+
+* Event normalization
+* Session reconstruction
+* Channel grouping
+* Data quality flags
+* Purchase deduplication
+* Transaction validation
+
+---
+
+### Intermediate Layer
+
+Business logic is separated from reporting models.
+
+Models:
+
+* int_funnel_steps
+* int_sessions_enriched
+* int_user_metrics
+
+Purpose:
+
+* Funnel preparation
+* Session enrichment
+* User-level metric calculation
+
+---
+
+### Business Marts
+
+Final analytical datasets optimized for BI reporting.
+
+#### mart_executive_kpi
+
+Executive-level daily performance metrics:
+
+* Revenue
+* Sessions
+* Users
+* Purchases
+* Conversion Rate
+* Average Order Value
+
+#### mart_channel_performance
+
+Marketing channel analysis:
+
+* Sessions
+* Revenue
+* Conversion Rate
+* Transactions
+
+#### mart_funnel
+
+Normalized ecommerce funnel:
+
+* View Item
+* Add To Cart
+* Begin Checkout
+* Purchase
+
+#### mart_retention
+
+Customer retention metrics:
+
+* Cohort analysis
+* Day 1 retention
+* Day 7 retention
+* Day 30 retention
+
+#### mart_user_ltv
+
+User-level lifetime value dataset:
+
+* Revenue per user
+* Session frequency
+* Lifetime duration
+* Purchase behavior
+
+#### mart_data_quality
+
+Centralized data quality monitoring:
+
+* Missing transaction IDs
+* Duplicate transaction IDs
+* Revenue validation
+* Session anomalies
+* Data freshness checks
+
+---
+
+## Data Quality Findings
+
+Several issues were identified during exploratory analysis and addressed within the pipeline.
+
+### Duplicate Purchase Events
+
+Purchase events contained duplicated transaction IDs.
+
+Findings:
+
+* 4,786 purchase events
+* 4,451 unique transactions
+* 335 duplicated purchase events
+* Duplicate rate: 7.0%
+
+Solution:
+
+Purchase events are deduplicated using:
+
+ROW_NUMBER() OVER (
+PARTITION BY transaction_id
+ORDER BY event_timestamp
+)
+
+Only the first occurrence of each transaction is retained.
+
+---
+
+### Missing Transaction IDs
+
+Some purchase events were missing transaction identifiers.
+
+Findings:
+
+* 906 purchase events without valid transaction IDs
+
+Impact:
+
+These events are excluded from revenue calculations to avoid metric inflation.
+
+---
+
+### Funnel Anomalies
+
+Sessions were detected where users reached checkout without a preceding add_to_cart event.
+
+Impact:
+
+Traditional funnel calculations produced conversion rates above 100%.
+
+Solution:
+
+A normalized sequential funnel was implemented to ensure valid step progression.
+
+---
+
+## Testing
+
+The project includes both schema tests and custom SQL tests.
+
+Examples:
+
+* Not Null Tests
+* Unique Session ID Tests
+* Funnel Validation Tests
+* Revenue Validation Tests
+* Retention Validation Tests
+* LTV Validation Tests
+
+All business marts are validated through automated dbt testing.
+
+---
+
+## Key Skills Demonstrated
+
+* Analytics Engineering
+* SQL Development
+* Data Modeling
+* dbt
 * BigQuery
-* Git
-* Tableau (planned dashboard layer)
+* Data Quality Monitoring
+* Funnel Analytics
+* Cohort Analysis
+* Customer Lifetime Value Analysis
 
 ---
 
-## Future Improvements
+## Repository Structure
 
-* Incremental dbt models
-* CI/CD pipeline with GitHub Actions
-* Advanced attribution models
-* Customer RFM segmentation
-* Marketing ROI analysis
-* Interactive Tableau dashboards
+models/
+├── staging/
+├── intermediate/
+└── marts/
 
----
+tests/
 
-Developed as a portfolio project focused on modern analytics engineering and product analytics practices.
+analyses/
+
+README.md
+
+dbt_project.yml
+* Near real-time reporting
+* Customer segmentation models
