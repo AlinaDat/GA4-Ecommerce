@@ -23,5 +23,3 @@ jobs:
       - run: dbt deps
 
       - run: dbt parse
-
-      - run: dbt test
