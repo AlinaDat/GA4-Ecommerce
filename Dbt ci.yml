@@ -32,8 +32,6 @@ steps:
 
   - name: Create temporary profile
     run: |
-      mkdir -p ~/.dbt
-
       cat > profiles.yml << EOF
       ga4_analytics:
         target: dev
