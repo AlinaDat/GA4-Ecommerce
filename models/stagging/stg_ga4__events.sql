@@ -1,7 +1,7 @@
 {{
   config(
     materialized = 'view',
-    description  = 'Staging GA4 подій'
+    description  = 'Staging GA4 подій. Публічний датасет bigquery-public-data. 1 рядок = 1 подія, без агрегацій, наявні дублі.'
   )
 }}
 
@@ -29,7 +29,7 @@ renamed as (
         -- ── Event ────────────────────────────────────────
         event_name,
 
-        -- ── Session ─
+        -- ── Session (з event_params через scalar subquery) ─
         (
             select value.int_value
             from unnest(event_params)
@@ -74,30 +74,17 @@ renamed as (
             where key = 'engagement_time_msec'
         )                                            as engagement_time_msec,
 
-        -- ── Traffic (session-level) ──
-        -- DQ: (none) і <Other> → NULL
-        nullif(
-            (select value.string_value from unnest(event_params)
-             where key = 'source'), '<Other>'
-        )                                            as session_source,
+        -- ── Traffic (session-level) ─────────────────────────────
+        (select value.string_value from unnest(event_params) where key = 'source') as session_source_raw,
 
-        nullif(
-            nullif(
-                (select value.string_value from unnest(event_params)
-                 where key = 'medium'), '<Other>'
-            ), '(none)'
-        )                                            as session_medium,
+        (select value.string_value from unnest(event_params) where key = 'medium') as session_medium_raw,
 
-        (
-            select value.string_value
-            from unnest(event_params)
-            where key = 'campaign'
-        )                                            as session_campaign,
+        (select value.string_value from unnest(event_params) where key = 'campaign') as session_campaign,
 
-        -- ── Traffic STRUCT (first-touch attribution) ─────
-        nullif(traffic_source.source, '<Other>')     as traffic_source,
-        nullif(traffic_source.medium, '<Other>')     as traffic_medium,
-        nullif(traffic_source.name, '<Other>')       as traffic_campaign,
+        -- ── Traffic STRUCT (first-touch attribution) ────────────
+        nullif(traffic_source.source, '<Other>') as traffic_source,
+        nullif(traffic_source.medium, '<Other>') as traffic_medium,
+        nullif(traffic_source.name, '<Other>') as traffic_campaign,
 
         -- ── Device ───────────────────────────────────────
         device.category                              as device_category,
@@ -118,7 +105,6 @@ renamed as (
         ecommerce.shipping_value                     as shipping_value,
         ecommerce.unique_items                       as unique_items,
         items                    as items
-       
 
     from source
 ),
@@ -141,40 +127,71 @@ final as (
         -- ── Engagement flag ──────────────────────────────
         session_engaged_raw = '1'           as is_session_engaged,
 
+        -- ── Clean traffic fields ─────────────────────────
+
+        nullif(
+            session_source_raw,
+            '<Other>'
+        ) as session_source,
+
+        nullif(
+            nullif(
+                session_medium_raw,
+                '<Other>'
+            ),
+            '(none)'
+        ) as session_medium,
+
         -- ── Channel grouping ─────────────────────────────
+
         case
-            when session_medium = 'organic'                       then 'Organic Search'
-            when session_medium in ('cpc', 'ppc', 'paid')         then 'Paid Search'
-            when session_medium in ('email', 'e-mail', 'mail')    then 'Email'
-            when session_medium in ('social', 'social-network')   then 'Organic Social'
-            when session_medium = 'referral'                      then 'Referral'
-            when session_medium = 'affiliate'                     then 'Affiliates'
-            when session_source = '(direct)' or session_source is null
-                                                                  then 'Direct'
-            else 'Other'
-        end                                 as channel_group,
+            when session_medium_raw = 'organic'
+                then 'Organic Search'
 
-        -- ── DQ flags (знайдено в аналізі) ────────────────
+            when session_medium_raw in ('cpc','ppc','paid')
+                then 'Paid Search'
 
-        -- Internal cross-domain (shop.googlemerchandisestore.com)
+            when session_medium_raw in ('email','e-mail','mail')
+                then 'Email'
+
+            when session_medium_raw in ('social','social-network')
+                then 'Organic Social'
+
+            when session_medium_raw = 'referral'
+                then 'Referral'
+
+            when session_medium_raw = 'affiliate'
+                then 'Affiliates'
+
+            when session_source_raw = '(direct)'
+                then 'Direct'
+        else 'Other' 
+        end as channel_group,
+
+        -- ── DQ flags ─────────────────────────────────────
+
         traffic_source = 'shop.googlemerchandisestore.com'
-          and traffic_medium = 'referral'   as is_internal_referral,
+            and traffic_medium = 'referral'
+                as is_internal_referral,
 
-        -- GDPR / Consent Mode deleted data
-        traffic_source = '(data deleted)'   as is_gdpr_deleted,
+        traffic_source = '(data deleted)'
+            as is_gdpr_deleted,
 
-        -- Purchase без transaction_id (23 події, 0.4%)
         (
             event_name = 'purchase'
-            and (transaction_id is null or transaction_id = '(not set)')
-        )                                   as flag_missing_txn_id,
+            and (
+                transaction_id is null
+                or transaction_id = '(not set)'
+            )
+        ) as flag_missing_txn_id,
 
         (
             event_name = 'purchase'
             and purchase_revenue is null
-        )                                   as flag_null_revenue
+        ) as flag_null_revenue
 
     from renamed
+
 )
 
 select * from final
