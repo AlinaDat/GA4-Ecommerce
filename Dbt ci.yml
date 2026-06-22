@@ -1,0 +1,349 @@
+name: dbt CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'dbt_project/**'
+      - '.github/workflows/dbt_ci.yml'
+
+  pull_request:
+    branches: [main]
+    paths:
+      - 'dbt_project/**'
+
+  # Щоденний запуск о 06:00 UTC (08:00 Kyiv)
+  schedule:
+    - cron: '0 6 * * *'
+
+  workflow_dispatch:            # Ручний запуск з GitHub UI
+    inputs:
+      target:
+        description: 'dbt target (dev / prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, prod]
+      full_refresh:
+        description: 'Run with --full-refresh?'
+        required: false
+        default: 'false'
+        type: boolean
+
+# ── Запобігаємо паралельним запускам на одній гілці ─────────────────────────
+concurrency:
+  group: dbt-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Глобальні змінні ────────────────────────────────────────────────────────
+env:
+  DBT_VERSION: "1.8.0"
+  PYTHON_VERSION: "3.11"
+  DBT_PROFILES_DIR: ./dbt_project
+  DBT_PROJECT_DIR: ./dbt_project
+
+jobs:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 1: SQL LINTING (sqlfluff)
+  # Перевіряємо стиль SQL до запуску — швидко, дешево
+  # ══════════════════════════════════════════════════════════════════════════
+  lint:
+    name: "SQL Lint (sqlfluff)"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'  # тільки на PR
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install sqlfluff
+        run: pip install sqlfluff sqlfluff-templater-dbt
+
+      - name: Lint SQL models
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          sqlfluff lint models/ \
+            --dialect bigquery \
+            --templater dbt \
+            --format github-annotation \
+            --annotation-level warning \
+            --processes 4
+        continue-on-error: true   # Lint помилки — warning, не блок
+
+      - name: Lint report
+        if: always()
+        run: echo "SQL linting complete. Check annotations above."
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 2: dbt CI — Tests + Build (на PR і push в develop)
+  # ══════════════════════════════════════════════════════════════════════════
+  dbt-ci:
+    name: "dbt CI: Test + Build"
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target || 'dev' }}
+
+    # Потрібні секрети в GitHub Settings → Environments → dev
+    # Secrets: GCP_SERVICE_ACCOUNT_KEY, GCP_PROJECT_ID
+    env:
+      DBT_TARGET:     ${{ github.event.inputs.target || 'dev' }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
+
+      # ── 2. Python + dbt ────────────────────────────────────────────────
+      - name: "🐍 Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: "📦 Install dbt + dependencies"
+        run: |
+          pip install \
+            dbt-core==${{ env.DBT_VERSION }} \
+            dbt-bigquery==${{ env.DBT_VERSION }} \
+            sqlfluff \
+            sqlfluff-templater-dbt
+
+      # ── 3. GCP Auth ────────────────────────────────────────────────────
+      - name: "🔑 Authenticate to GCP"
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: "☁️ Set up gcloud"
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 4. dbt deps ────────────────────────────────────────────────────
+      - name: "📚 Install dbt packages"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt deps
+
+      # ── 5. dbt debug ───────────────────────────────────────────────────
+      - name: "🔍 dbt debug (connection check)"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt debug --target ${{ env.DBT_TARGET }}
+
+      # ── 6. Source freshness ────────────────────────────────────────────
+      - name: "⏰ Check source freshness"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt source freshness \
+            --target ${{ env.DBT_TARGET }} \
+            --output target/sources.json
+        continue-on-error: true   # freshness warn не блокує build
+
+      # ── 7. dbt build (compile + run + test) ───────────────────────────
+      - name: "🔨 dbt build"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt build \
+            --target ${{ env.DBT_TARGET }} \
+            ${{ github.event.inputs.full_refresh == 'true' && '--full-refresh' || '' }} \
+            --fail-fast \
+            --store-failures
+
+      # ── 8. Run ONLY critical tests (якщо build пройшов) ───────────────
+      - name: "🧪 Run critical data quality tests"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt test \
+            --target ${{ env.DBT_TARGET }} \
+            --select "tag:data_quality" \
+            --store-failures
+        if: success()
+
+      # ── 9. Upload test results as artifact ────────────────────────────
+      - name: "📊 Upload dbt artifacts"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dbt-artifacts-${{ github.run_id }}
+          path: |
+            ${{ env.DBT_PROJECT_DIR }}/target/manifest.json
+            ${{ env.DBT_PROJECT_DIR }}/target/run_results.json
+            ${{ env.DBT_PROJECT_DIR }}/target/sources.json
+          retention-days: 30
+
+      # ── 10. Annotate PR with test failures ────────────────────────────
+      - name: "❌ Report dbt test failures"
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '${{ env.DBT_PROJECT_DIR }}/target/run_results.json';
+
+            if (!fs.existsSync(path)) {
+              core.setFailed('run_results.json not found');
+              return;
+            }
+
+            const results = JSON.parse(fs.readFileSync(path));
+            const failures = results.results
+              .filter(r => r.status === 'fail' || r.status === 'error')
+              .map(r => `- **${r.unique_id}**: ${r.message || r.status}`)
+              .join('\n');
+
+            if (failures) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## ❌ dbt Build Failed\n\n**Failed tests:**\n${failures}\n\n[View full logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+              });
+              core.setFailed(`${failures.split('\n').length} dbt tests failed`);
+            }
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 3: dbt docs GENERATE + DEPLOY (тільки на merge в main)
+  # ══════════════════════════════════════════════════════════════════════════
+  docs-deploy:
+    name: "📖 Generate + Deploy dbt Docs"
+    runs-on: ubuntu-latest
+    needs: dbt-ci                 # Тільки якщо CI пройшов
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: write             # Потрібно для GitHub Pages push
+      pages: write
+      id-token: write
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: "📦 Install dbt"
+        run: |
+          pip install \
+            dbt-core==${{ env.DBT_VERSION }} \
+            dbt-bigquery==${{ env.DBT_VERSION }}
+
+      - name: "🔑 Authenticate to GCP"
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: "📚 Install dbt packages"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt deps
+
+      # ── Download artifacts від CI job ──────────────────────────────────
+      - name: "📥 Download dbt artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: dbt-artifacts-${{ github.run_id }}
+          path: ${{ env.DBT_PROJECT_DIR }}/target/
+
+      # ── Генеруємо docs (використовуємо existing manifest) ─────────────
+      - name: "📖 Generate dbt docs"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt docs generate \
+            --target prod \
+            --no-compile    # manifest вже є з CI job
+
+      # ── Deploy на GitHub Pages ─────────────────────────────────────────
+      - name: "🚀 Deploy docs to GitHub Pages"
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir:  ${{ env.DBT_PROJECT_DIR }}/target
+          publish_branch: gh-pages
+          commit_message: "docs: update dbt docs [${{ github.sha }}]"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 4: SCHEDULED DAILY RUN (production refresh)
+  # ══════════════════════════════════════════════════════════════════════════
+  daily-prod-run:
+    name: "🌅 Daily Production Run"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    environment: prod
+
+    env:
+      DBT_TARGET:     prod
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: "📦 Install dbt"
+        run: pip install dbt-core==${{ env.DBT_VERSION }} dbt-bigquery==${{ env.DBT_VERSION }}
+
+      - name: "🔑 Authenticate to GCP"
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: "📚 dbt deps"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt deps
+
+      - name: "⏰ Source freshness check"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt source freshness --target ${{ env.DBT_TARGET }}
+        continue-on-error: true
+
+      - name: "🔨 dbt build (prod)"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt build \
+            --target ${{ env.DBT_TARGET }} \
+            --store-failures
+
+      - name: "🧪 Data quality tests"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: |
+          dbt test \
+            --target ${{ env.DBT_TARGET }} \
+            --select "tag:monitoring"
+
+      - name: "📖 Refresh docs"
+        working-directory: ${{ env.DBT_PROJECT_DIR }}
+        run: dbt docs generate --target ${{ env.DBT_TARGET }}
+
+      # ── Slack notification on failure ──────────────────────────────────
+      - name: "🔔 Slack alert on failure"
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "❌ *dbt Daily Run FAILED*",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "❌ *dbt Production Run Failed*\n*Branch:* `${{ github.ref_name }}`\n*Commit:* `${{ github.sha }}`\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
