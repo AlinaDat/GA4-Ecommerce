@@ -64,64 +64,20 @@ The project addresses common ecommerce analytics use cases:
 
 ## Data Architecture
 
-### Data Pipeline
-
-```mermaid
-graph LR
-    %% Напрямок зліва направо (Left to Right) для кращої читабельності
-    
-    subgraph Source [Джерело даних]
-        Raw[GA4 Raw Events]
-    end
-
-    subgraph Staging [Staging Шар]
-        Stg[stg_ga4__events]
-    end
-
-    subgraph Intermediate [Проміжний шар / Логіка]
-        Int1[int_sessions]
-        Int2[int_funnel_steps]
-        Int3[int_user_metrics]
-    end
-
-    subgraph Marts [Вітрини даних / Data Marts]
-        M1[mart_executive_kpi]
-        M2[mart_daily_performance]
-        M3[mart_funnel]
-        M4[mart_product_performance]
-        M5[mart_retention]
-        M6[mart_user_ltv]
-        M7[mart_data_quality]
-    end
-
-    subgraph BI [Візуалізація]
-        Tableau[(Tableau Dashboards)]
-    end
-
-    %% Зв'язки між шарами (без "каші" з ліній)
-    Raw --> Stg
-    Stg --> Int1 & Int2 & Int3
-    
-    Int1 & Int2 & Int3 --> M1
-    Int1 & Int2 & Int3 --> M2
-    Int1 & Int2 & Int3 --> M3
-    Int1 & Int2 & Int3 --> M4
-    Int1 & Int2 & Int3 --> M5
-    Int1 & Int2 & Int3 --> M6
-    Int1 & Int2 & Int3 --> M7
-
-    M1 & M2 & M3 & M4 & M5 & M6 & M7 --> Tableau
-
-    %% Стилізація для сучасного вигляду
-    style Raw fill:#ECEFF1,stroke:#37474F,stroke-width:2px,color:#333
-    style Stg fill:#E1F5FE,stroke:#0288D1,stroke-width:1px,color:#333
-    style Int1 fill:#E8F5E9,stroke:#388E3C,stroke-width:1px,color:#333
-    style Int2 fill:#E8F5E9,stroke:#388E3C,stroke-width:1px,color:#333
-    style Int3 fill:#E8F5E9,stroke:#388E3C,stroke-width:1px,color:#333
-    style Tableau fill:#E0F2F1,stroke:#004D40,stroke-width:2px,color:#333
-    
-    classDef marts fill:#FFF3E0,stroke:#F57C00,stroke-width:1px,color:#333;
-    class M1,M2,M3,M4,M5,M6,M7 marts;
+```text
+Raw GA4 Events
+      │
+      ▼
+Staging Layer
+      │
+      ▼
+Intermediate Layer
+      │
+      ▼
+Business Marts
+      │
+      ▼
+Tableau Dashboards
 ```
 
 ### Staging Layer
