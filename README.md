@@ -423,12 +423,3 @@ The lineage graph visualizes how raw GA4 events are transformed into reporting-r
 * Marketing Attribution
 * CI/CD
 * Source Freshness Monitoring
-
-### Repository Structure
-models/
-├── staging/
-├── intermediate/
-├── marts/
-├── tests/
-.github/
-└── workflows/
