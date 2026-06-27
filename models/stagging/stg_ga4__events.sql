@@ -1,6 +1,6 @@
 {{
   config(
-    materialized = 'view',
+    materialized = 'table',
     description  = 'Staging GA4 подій. Публічний датасет bigquery-public-data. 1 рядок = 1 подія, без агрегацій, наявні дублі.'
   )
 }}
